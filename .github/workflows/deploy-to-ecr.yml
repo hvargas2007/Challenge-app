@@ -99,7 +99,8 @@ jobs:
             "echo \"=== Starting deployment of version '$IMAGE_TAG' ===\"",
             "cd /home/ssm-user",
             "sudo aws ecr get-login-password --region '${{ vars.AWS_REGION || 'us-east-1' }}' | sudo docker login --username AWS --password-stdin 540551285630.dkr.ecr.us-east-1.amazonaws.com",
-            "cat > docker-compose-ecr.yml << '\''EOF'\''
+            "echo \"Creating docker-compose file with image: '$IMAGE_URI'\"",
+            "cat > docker-compose-ecr.yml << EOF
 services:
   api:
     image: '$IMAGE_URI'

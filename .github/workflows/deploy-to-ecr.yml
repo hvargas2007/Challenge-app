@@ -92,39 +92,46 @@ jobs:
       run: |
         echo "Deploying image: $IMAGE_URI to instance: $INSTANCE_ID"
         
-        COMMAND_ID=$(aws ssm send-command \
-          --document-name "AWS-RunShellScript" \
-          --instance-ids "$INSTANCE_ID" \
-          --parameters 'commands=[
-            "echo \"=== Starting deployment of version '$IMAGE_TAG' ===\"",
-            "cd /home/ssm-user",
-            "sudo aws ecr get-login-password --region '${{ vars.AWS_REGION || 'us-east-1' }}' | sudo docker login --username AWS --password-stdin 540551285630.dkr.ecr.us-east-1.amazonaws.com",
-            "echo \"Creating docker-compose file with image: '$IMAGE_URI'\"",
-            "cat > docker-compose-ecr.yml << EOF
+        # Create docker-compose content
+        COMPOSE_CONTENT=$(cat << 'COMPOSE_EOF'
 services:
   api:
-    image: '$IMAGE_URI'
+    image: IMAGE_PLACEHOLDER
     ports:
-      - \"80:80\"
+      - "80:80"
     volumes:
       - /mnt/efs/json-storage:/mnt/efs/json-storage
     environment:
       - STORAGE_PATH=/mnt/efs/json-storage
     restart: always
     healthcheck:
-      test: [\"CMD\", \"curl\", \"-f\", \"http://localhost/health\"]
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-EOF",
-            "echo \"=== Docker compose file created ===\"",
-            "sudo docker-compose -f docker-compose-ecr.yml pull",
-            "sudo docker-compose -f docker-compose-ecr.yml up -d",
-            "echo \"=== Deployment completed ===\"",
-            "sudo docker ps",
-            "curl -f http://localhost/health || echo \"Health check failed\""
-          ]' \
+COMPOSE_EOF
+        )
+        
+        # Replace placeholder with actual image URI
+        COMPOSE_CONTENT="${COMPOSE_CONTENT//IMAGE_PLACEHOLDER/$IMAGE_URI}"
+        
+        COMMAND_ID=$(aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --instance-ids "$INSTANCE_ID" \
+          --parameters "commands=[
+            \"echo '=== Starting deployment of version $IMAGE_TAG ===' \",
+            \"cd /home/ssm-user\",
+            \"sudo aws ecr get-login-password --region ${{ vars.AWS_REGION || 'us-east-1' }} | sudo docker login --username AWS --password-stdin 540551285630.dkr.ecr.us-east-1.amazonaws.com\",
+            \"echo 'Creating docker-compose file with image: $IMAGE_URI'\",
+            \"echo '$COMPOSE_CONTENT' > docker-compose-ecr.yml\",
+            \"echo '=== Docker compose file created ===' \",
+            \"sudo docker-compose -f docker-compose-ecr.yml pull\",
+            \"sudo docker-compose -f docker-compose-ecr.yml up -d\",
+            \"echo '=== Deployment completed ===' \",
+            \"sudo docker ps\",
+            \"curl -f http://localhost/health || echo 'Health check failed'\"
+          ]" \
           --output text \
           --query 'Command.CommandId')
         

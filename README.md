@@ -2,8 +2,6 @@
 
 API REST para almacenamiento de documentos JSON con autenticación, balanceo de carga y despliegue automático en múltiples instancias EC2 usando GitHub Actions y Amazon ECR.
 
-**Author**: Hermes Vargas  
-**Email**: hermesvargas200720@gmail.com
 
 ## Arquitectura
 
@@ -14,7 +12,7 @@ API REST para almacenamiento de documentos JSON con autenticación, balanceo de 
 - **Automatización**: AWS Systems Manager (SSM)
 - **Alta Disponibilidad**: Deploy simultáneo en 2 instancias EC2
 
-## 🚀 Flujo de CI/CD
+## Flujo de CI/CD
 
 ### 1. **Pull Request Workflow** (Validación)
 - Build de la imagen Docker
@@ -28,7 +26,7 @@ API REST para almacenamiento de documentos JSON con autenticación, balanceo de 
 - Actualización sin downtime
 - Health checks post-deploy
 
-## 📁 Estructura del Proyecto
+## Estructura del Proyecto
 
 ```
 .
@@ -47,7 +45,7 @@ API REST para almacenamiento de documentos JSON con autenticación, balanceo de 
 └── README.md
 ```
 
-## 🔧 Configuración Inicial
+## Configuración Inicial
 
 ### 1. AWS ECR
 ```bash
@@ -148,7 +146,7 @@ sudo systemctl start amazon-ssm-agent
 sudo systemctl enable amazon-ssm-agent
 ```
 
-## 🛠️ API Endpoints
+## API Endpoints
 
 ### Endpoints públicos
 ```bash
@@ -178,7 +176,7 @@ curl -X DELETE http://EC2_IP/json/test \
   -H "Authorization: Bearer ${API_TOKEN}"
 ```
 
-## 📦 Proceso de Deploy
+## Proceso de Deploy
 
 ### Deploy Automático (Recomendado)
 
@@ -211,3 +209,7 @@ cd pruebas
 python3 test_balanceo.py
 ```
 
+---
+
+👤 **Autor**: Hermes Vargas  
+📧 **Email**: hermes.vargas@cloudhesive.com

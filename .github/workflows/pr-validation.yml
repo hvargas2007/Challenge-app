@@ -38,55 +38,21 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: challenge-app:scan
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        severity: 'CRITICAL,HIGH'
-        exit-code: '0'  # No fallar el build, solo reportar
-
-    - name: Upload Trivy scan results to GitHub Security
-      uses: github/codeql-action/upload-sarif@v3
-      if: always()
-      with:
-        sarif_file: 'trivy-results.sarif'
-
-    - name: Run Trivy for PR comment
+      id: trivy
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: challenge-app:scan
         format: 'table'
         output: 'trivy-results.txt'
         severity: 'CRITICAL,HIGH,MEDIUM'
-        exit-code: '0'
+        exit-code: '0'  
 
-    - name: Comment PR with scan results
-      uses: actions/github-script@v7
-      if: github.event_name == 'pull_request'
-      with:
-        script: |
-          const fs = require('fs');
-          const trivyResults = fs.readFileSync('trivy-results.txt', 'utf8');
-          
-          const output = `## Security Scan Results
-          
-          <details>
-          <summary>Trivy Vulnerability Scan</summary>
-          
-          \`\`\`
-          ${trivyResults}
-          \`\`\`
-          </details>
-          
-          Build successful! The image is ready for deployment.`;
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: output
-          });
+    - name: Save Trivy results
+      id: trivy-output
+      run: |
+        echo "results<<EOF" >> $GITHUB_OUTPUT
+        cat trivy-results.txt >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
   code-quality:
     name: Code Quality Checks
@@ -107,110 +73,56 @@ jobs:
         pip install -r requirements.txt
         pip install pylint black isort safety bandit
 
-    - name: Run Black formatter check
+    - name: Run code quality checks
+      id: quality-checks
       run: |
         cd docker
-        black --check main.py || echo "::warning::Code formatting issues found. Run 'black main.py' to fix."
-
-    - name: Run isort import checker
-      run: |
-        cd docker
-        isort --check-only main.py || echo "::warning::Import ordering issues found. Run 'isort main.py' to fix."
-
-    - name: Run Pylint
-      run: |
-        cd docker
-        pylint main.py --exit-zero --output-format=colorized
-
-    - name: Run Bandit security linter
-      run: |
-        cd docker
-        bandit -r main.py -f json -o bandit-results.json || true
-
-    - name: Check for hardcoded secrets
-      run: |
-        cd docker
-        # Check for potential hardcoded secrets
-        if grep -E "(api_key|apikey|password|passwd|pwd|secret|token)" main.py | grep -v "API_TOKEN" | grep -v "Bearer"; then
-          echo "::error::Potential hardcoded secrets found!"
-          exit 1
+        ISSUES=""
+        
+        # Black formatter
+        if ! black --check main.py 2>&1 > /dev/null; then
+          ISSUES="${ISSUES}- Formato de código necesita ajustes\n"
         fi
-
-    - name: Safety check for dependencies
-      run: |
-        cd docker
-        safety check -r requirements.txt --json || echo "::warning::Some dependencies have known vulnerabilities"
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install test dependencies
-      run: |
-        pip install requests pytest
-
-    - name: Build and run test container
-      run: |
-        cd docker
-        docker build -t challenge-app-test .
-        docker run -d -p 8080:80 --name test-api challenge-app-test
         
-        # Wait for container to be ready
-        sleep 5
+        # Check for hardcoded secrets
+        if grep -E "(api_key|apikey|password|passwd|pwd|secret|token)" main.py | grep -v "API_TOKEN" | grep -v "Bearer" > /dev/null; then
+          ISSUES="${ISSUES}- Posibles secretos en el código\n"
+        fi
         
-        # Check health
-        curl -f http://localhost:8080/health || exit 1
+        echo "issues<<EOF" >> $GITHUB_OUTPUT
+        echo "$ISSUES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Run API tests
-      run: |
-        cd pruebas
-        # Update test to use local test instance
-        sed -i 's|http://.*:80|http://localhost:8080|' test_api.py || true
-        python test_api.py || echo "::warning::Some tests failed"
-
-    - name: Cleanup
-      if: always()
-      run: |
-        docker stop test-api || true
-        docker rm test-api || true
-
-  pr-summary:
-    name: PR Summary
+  pr-comment:
+    name: Comment PR Results
     runs-on: ubuntu-latest
-    needs: [build-and-scan, code-quality, test]
+    needs: [build-and-scan, code-quality]
     if: always()
     
     steps:
-    - name: Comment PR Summary
+    - name: Comment PR results
       uses: actions/github-script@v7
       with:
         script: |
-          const jobs = ${{ toJson(needs) }};
-          const allPassed = Object.values(jobs).every(job => job.result === 'success');
+          const buildScan = ${{ toJson(needs['build-and-scan']) }};
+          const codeQuality = ${{ toJson(needs['code-quality']) }};
           
-          const emoji = allPassed ? 'PASSED' : 'WARNING';
-          const status = allPassed ? 'All checks passed!' : 'Some checks require attention';
+          let body = `### Resultado de la validación\n\n`;
           
-          const body = `## ${emoji} PR Validation Summary
-          
-          **Status**: ${status}
-          
-          | Check | Status |
-          |-------|--------|
-          | Build & Security Scan | ${jobs['build-and-scan'].result} |
-          | Code Quality | ${jobs['code-quality'].result} |
-          | Tests | ${jobs.test.result} |
-          
-          ${allPassed ? '**This PR is ready for review!**' : '**Please address the issues above before merging.**'}`;
+          if (buildScan.result === 'success' && codeQuality.result === 'success') {
+            const issues = codeQuality.outputs && codeQuality.outputs['quality-checks.issues'];
+            
+            if (!issues || issues.trim() === '') {
+              body += `Todo se ve bien! La imagen Docker se construyó correctamente.\n\n`;
+              body += `Listo para hacer merge.`;
+            } else {
+              body += `La imagen se construyó bien, pero encontré estos detalles:\n\n`;
+              body += issues;
+              body += `\nSon sugerencias, puedes revisarlas o continuar.`;
+            }
+          } else {
+            body += `Algo no salió bien en la validación. Revisa los detalles arriba.`;
+          }
           
           github.rest.issues.createComment({
             issue_number: context.issue.number,

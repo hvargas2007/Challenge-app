@@ -8,7 +8,7 @@ AZUL = '\033[94m'
 AMARILLO = '\033[93m'
 RESET = '\033[0m'
 
-url_base = "http://98.84.55.132"
+url_base = "http://3.238.65.62/"
 token = "sk-proj-x7B9mN3pQ5vL2kR8fT6yH4jW1sZ0aE"
 headers = {
     "Authorization": f"Bearer {token}",

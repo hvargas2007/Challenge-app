@@ -6,7 +6,7 @@ AZUL = '\033[94m'
 VERDE = '\033[92m'
 RESET = '\033[0m'
 
-url = "http://98.84.55.132/health"
+url = "http://3.238.65.62/health"
 
 print("\nProbando balanceo de carga...\n")
 

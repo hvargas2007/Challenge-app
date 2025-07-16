@@ -1,6 +1,6 @@
 services:
   api:
-    image: 540551285630.dkr.ecr.us-east-1.amazonaws.com/test:latest
+    image: 540551285630.dkr.ecr.us-east-1.amazonaws.com/test:v4
     ports:
       - "80:80"
     volumes:

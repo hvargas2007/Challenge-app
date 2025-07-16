@@ -79,6 +79,8 @@ jobs:
   code-quality:
     name: Code Quality Checks
     runs-on: ubuntu-latest
+    needs: security-scan
+    if: always()
     
     steps:
     - name: Checkout code
@@ -114,27 +116,21 @@ jobs:
         echo "issues<<EOF" >> $GITHUB_OUTPUT
         echo "$ISSUES" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-
-  pr-comment:
-    name: Comment PR Results
-    runs-on: ubuntu-latest
-    needs: [build, security-scan, code-quality]
-    if: always()
     
-    steps:
     - name: Comment PR results
       uses: actions/github-script@v7
+      if: always()
       with:
         script: |
-          const build = ${{ toJson(needs['build']) }};
-          const securityScan = ${{ toJson(needs['security-scan']) }};
-          const codeQuality = ${{ toJson(needs['code-quality']) }};
+          const buildJob = ${{ job.status == 'success' && needs.build.result == 'success' }};
+          const scanJob = ${{ job.status == 'success' && needs['security-scan'].result == 'success' }};
+          const currentJobStatus = ${{ job.status }};
           
           let body = `### Resultado de la validación\n\n`;
           
-          if (build.result === 'success' && securityScan.result === 'success' && codeQuality.result === 'success') {
-            const issues = codeQuality.outputs && codeQuality.outputs['quality-checks.issues'];
-            
+          const issues = '${{ steps.quality-checks.outputs.issues }}';
+          
+          if (buildJob && scanJob && currentJobStatus === 'success') {
             if (!issues || issues.trim() === '') {
               body += `Todo se ve bien! La imagen Docker se construyó correctamente.\n\n`;
               body += `Listo para hacer merge.`;

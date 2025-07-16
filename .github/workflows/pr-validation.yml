@@ -122,15 +122,14 @@ jobs:
       if: always()
       with:
         script: |
-          const buildJob = ${{ job.status == 'success' && needs.build.result == 'success' }};
-          const scanJob = ${{ job.status == 'success' && needs['security-scan'].result == 'success' }};
-          const currentJobStatus = ${{ job.status }};
+          const buildResult = '${{ needs.build.result }}';
+          const scanResult = '${{ needs.security-scan.result }}';
+          const currentJob = '${{ job.status }}';
+          const issues = `${{ steps.quality-checks.outputs.issues }}`;
           
           let body = `### Resultado de la validación\n\n`;
           
-          const issues = '${{ steps.quality-checks.outputs.issues }}';
-          
-          if (buildJob && scanJob && currentJobStatus === 'success') {
+          if (buildResult === 'success' && scanResult === 'success' && currentJob === 'success') {
             if (!issues || issues.trim() === '') {
               body += `Todo se ve bien! La imagen Docker se construyó correctamente.\n\n`;
               body += `Listo para hacer merge.`;

@@ -44,7 +44,7 @@ python3 test_api.py
 
 ## Ejemplos con CURL
 
-### Endpoints públicos (sin autenticación)
+###  Endpoints públicos (sin autenticación)
 
 **Health Check:**
 ```bash

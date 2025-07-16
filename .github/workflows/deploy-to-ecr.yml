@@ -92,61 +92,35 @@ jobs:
         # Convert comma-separated IDs to array
         IFS=',' read -ra INSTANCES <<< "$INSTANCE_IDS"
         
-        # Deploy to each instance ONE AT A TIME for zero downtime
-        TOTAL_INSTANCES=${#INSTANCES[@]}
-        CURRENT_INSTANCE=1
-        
+        # Deploy to each instance
         for INSTANCE_ID in "${INSTANCES[@]}"; do
           INSTANCE_ID=$(echo "$INSTANCE_ID" | tr -d ' ')
-          echo "=== Deploying to instance $CURRENT_INSTANCE of $TOTAL_INSTANCES: $INSTANCE_ID ==="
+          echo "=== Deploying to instance: $INSTANCE_ID ==="
         
         COMMAND_ID=$(aws ssm send-command \
           --document-name "AWS-RunShellScript" \
           --instance-ids "$INSTANCE_ID" \
-          --parameters 'commands=[
-            "echo \"=== Starting Zero-Downtime deployment of version '"$IMAGE_TAG"' ===\"",
-            "sudo aws ecr get-login-password --region '"${{ vars.AWS_REGION || 'us-east-1' }}"' | sudo docker login --username AWS --password-stdin 540551285630.dkr.ecr.us-east-1.amazonaws.com",
-            "echo \"=== Step 1: Pull new image ===\"",
-            "sudo docker pull '"$IMAGE_URI"'",
-            "echo \"=== Step 2: Find current container ===\"",
-            "CURRENT_CONTAINER=$(sudo docker ps --format \"{{.Names}}\" | grep -E \"^api-|^docker-api-1\" | head -1 || echo \"\")",
-            "echo \"Current container: $CURRENT_CONTAINER\"",
-            "echo \"=== Step 3: Start new container on temporary port ===\"",
-            "sudo docker run -d --name api-temp-'"$IMAGE_TAG"' -p 8080:80 -v /mnt/efs/json-storage:/mnt/efs/json-storage -e STORAGE_PATH=/mnt/efs/json-storage --restart unless-stopped '"$IMAGE_URI"'",
-            "echo \"=== Step 4: Wait for new container to be healthy ===\"",
-            "RETRIES=30",
-            "while [ $RETRIES -gt 0 ]; do",
-            "  if curl -sf http://localhost:8080/health > /dev/null 2>&1; then",
-            "    echo \"New container is healthy!\"",
-            "    break",
-            "  fi",
-            "  echo \"Waiting for health check... ($RETRIES retries left)\"",
-            "  RETRIES=$((RETRIES-1))",
-            "  sleep 2",
-            "done",
-            "if [ $RETRIES -eq 0 ]; then",
-            "  echo \"ERROR: New container failed health check!\"",
-            "  sudo docker stop api-temp-'"$IMAGE_TAG"'",
-            "  sudo docker rm api-temp-'"$IMAGE_TAG"'",
-            "  exit 1",
-            "fi",
-            "echo \"=== Step 5: Stop old container and switch ports ===\"",
-            "if [ ! -z \"$CURRENT_CONTAINER\" ]; then",
-            "  echo \"Stopping old container: $CURRENT_CONTAINER\"",
-            "  sudo docker stop $CURRENT_CONTAINER || true",
-            "  sudo docker rm $CURRENT_CONTAINER || true",
-            "fi",
-            "echo \"Stopping temporary container\"",
-            "sudo docker stop api-temp-'"$IMAGE_TAG"' || true",
-            "sudo docker rm api-temp-'"$IMAGE_TAG"' || true",
-            "echo \"Starting new container on port 80\"",
-            "sudo docker run -d --name api-'"$IMAGE_TAG"' -p 80:80 -v /mnt/efs/json-storage:/mnt/efs/json-storage -e STORAGE_PATH=/mnt/efs/json-storage --restart unless-stopped '"$IMAGE_URI"'",
-            "echo \"=== Step 6: Final verification ===\"",
-            "sleep 2",
-            "curl -sf http://localhost/health && echo \"Deployment successful!\" || echo \"WARNING: Health check failed!\"",
-            "echo \"=== Deployment completed! ===\"",
-            "sudo docker ps --format \"table {{.Names}}\t{{.Status}}\t{{.Ports}}\" | grep -E \"^api-\""
-          ]' \
+          --parameters "commands=[
+            \"echo '=== Starting deployment of version $IMAGE_TAG ===' \",
+            \"cd /home/ssm-user\",
+            \"sudo aws ecr get-login-password --region ${{ vars.AWS_REGION || 'us-east-1' }} | sudo docker login --username AWS --password-stdin 540551285630.dkr.ecr.us-east-1.amazonaws.com\",
+            \"echo 'Creating docker-compose file with image: $IMAGE_URI'\",
+            \"sed -i 's|image: .*|image: $IMAGE_URI|' docker-compose-ecr.yml || echo 'Creating new compose file'\",
+            \"if [ ! -f docker-compose-ecr.yml ]; then printf 'services:\\n  api:\\n    image: $IMAGE_URI\\n    ports:\\n      - \\\"80:80\\\"\\n    volumes:\\n      - /mnt/efs/json-storage:/mnt/efs/json-storage\\n    environment:\\n      - STORAGE_PATH=/mnt/efs/json-storage\\n    restart: always\\n' > docker-compose-ecr.yml; fi\",
+            \"echo '=== Docker compose file created ===' \",
+            \"cat docker-compose-ecr.yml\",
+            \"echo '=== Stopping old containers ===' \",
+            \"sudo docker stop docker-api-1 || true\",
+            \"sudo docker rm docker-api-1 || true\",
+            \"sudo docker-compose -f docker-compose-ecr.yml down || true\",
+            \"echo '=== Pulling new image ===' \",
+            \"sudo docker-compose -f docker-compose-ecr.yml pull\",
+            \"echo '=== Starting new container ===' \",
+            \"sudo docker-compose -f docker-compose-ecr.yml up -d\",
+            \"echo '=== Deployment completed ===' \",
+            \"sudo docker ps\",
+            \"curl -f http://localhost/health || echo 'Health check failed'\"
+          ]" \
           --output text \
           --query 'Command.CommandId')
         
@@ -188,15 +162,7 @@ jobs:
             echo "::warning::Failed to deploy to $INSTANCE_ID, continuing with other instances..."
           else
             echo "::notice ::Successfully deployed $IMAGE_TAG to $INSTANCE_ID!"
-            
-            # Wait for ALB to mark instance as healthy before proceeding to next
-            if [ $CURRENT_INSTANCE -lt $TOTAL_INSTANCES ]; then
-              echo "Waiting 30 seconds for load balancer to recognize the updated instance..."
-              sleep 30
-            fi
           fi
-          
-          CURRENT_INSTANCE=$((CURRENT_INSTANCE + 1))
         done
         
         echo "::notice ::Deployment process completed for all instances!"

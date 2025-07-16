@@ -1,170 +1,213 @@
-# JSON Storage API
+# Challenge App - FastAPI con CI/CD en AWS
 
-API REST para almacenamiento de documentos JSON con autenticación y balanceo de carga.
+API REST para almacenamiento de documentos JSON con autenticación, balanceo de carga y despliegue automático en múltiples instancias EC2 usando GitHub Actions y Amazon ECR.
 
-## 🚀 Características
+**Author**: Hermes Vargas  
+**Email**: hermesvargas200720@gmail.com
 
-- **API REST completa**: Operaciones CRUD para documentos JSON
-- **Autenticación**: Token Bearer para endpoints protegidos
-- **Alta disponibilidad**: Diseñada para funcionar con múltiples instancias
-- **Almacenamiento compartido**: Compatible con EFS/NFS
-- **Health checks**: Para monitoreo y balanceo de carga
-- **Identificación de servidor**: Para verificar distribución de carga
+## Arquitectura
 
-## 📁 Estructura del proyecto
+- **API**: FastAPI con Gunicorn
+- **Container Registry**: Amazon ECR  
+- **Deployment**: Múltiples EC2 con Docker Compose
+- **CI/CD**: GitHub Actions con OIDC
+- **Automatización**: AWS Systems Manager (SSM)
+- **Alta Disponibilidad**: Deploy simultáneo en 2 instancias EC2
+
+## 🚀 Flujo de CI/CD
+
+### 1. **Pull Request Workflow** (Validación)
+- Build de la imagen Docker
+- Análisis de seguridad con Trivy
+- Linting y validación de código
+- No hace push ni deploy
+
+### 2. **Main Branch Workflow** (Deploy)
+- Build y push de imagen a ECR con tag `vN`
+- Deploy automático a TODAS las EC2s configuradas
+- Actualización sin downtime
+- Health checks post-deploy
+
+## 📁 Estructura del Proyecto
 
 ```
-json-storage-api/
+.
+├── .github/
+│   └── workflows/
+│       ├── deploy-to-ecr.yml      # Deploy a producción
+│       └── pr-validation.yml      # Validación en PRs
 ├── docker/
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   ├── main.py
-│   ├── requirements.txt
-│   └── README.md
+│   ├── Dockerfile                 # Imagen de la aplicación
+│   ├── main.py                   # API FastAPI
+│   ├── requirements.txt          # Dependencias Python
+│   └── docker-compose.yml        # Para desarrollo local
 ├── pruebas/
-│   ├── test_balanceo.py
-│   ├── test_api.py
-│   └── README.md
+│   ├── test_api.py               # Tests de la API
+│   └── test_balanceo.py          # Tests de balanceo
 └── README.md
 ```
 
-## 🛠️ Instalación rápida
+## 🔧 Configuración Inicial
 
-### Prerrequisitos
-- Docker y Docker Compose
-- Python 3.8+ (para scripts de prueba)
-- Acceso a almacenamiento compartido (EFS/NFS)
-
-### Ejecutar con Docker Compose
-
+### 1. AWS ECR
 ```bash
-cd docker
-docker-compose up -d
+# Crear repositorio ECR
+aws ecr create-repository --repository-name challenge-app --region us-east-1
 ```
 
-### Ejecutar con Docker
+### 2. GitHub Secrets y Variables
 
-```bash
-cd docker
-docker build -t json-api .
-docker run -d -p 80:80 -e API_TOKEN=mi-token-secreto json-api
+#### Variables (Settings → Secrets and variables → Actions → Variables):
+- `AWS_REGION`: Región de AWS (ej: `us-east-1`)
+- `ECR_REPOSITORY`: Nombre del repositorio ECR (ej: `challenge-app`)
+- `EC2_INSTANCE_IDS`: IDs de las instancias separados por coma (ej: `i-abc123,i-def456`)
+
+#### Secrets:
+- `AWS_ROLE_ARN`: ARN del rol para GitHub OIDC
+
+### 3. Configuración OIDC en AWS
+
+1. Crear Identity Provider en IAM:
+   - Provider URL: `https://token.actions.githubusercontent.com`
+   - Audience: `sts.amazonaws.com`
+
+2. Crear rol con política de confianza:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:YOUR_ORG/YOUR_REPO:*"
+        }
+      }
+    }
+  ]
+}
 ```
 
-## 🔧 Configuración
+3. Políticas necesarias para el rol:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:SendCommand",
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations"
+      ],
+      "Resource": [
+        "arn:aws:ssm:*:*:document/AWS-RunShellScript",
+        "arn:aws:ec2:*:*:instance/*"
+      ]
+    }
+  ]
+}
+```
 
-### Variables de entorno
+### 4. Configuración EC2 (Ambas instancias)
 
-| Variable | Descripción | Por defecto |
-|----------|-------------|-------------|
-| `API_TOKEN` | Token de autenticación | `sk-proj-x7B9mN3pQ5vL2kR8fT6yH4jW1sZ0aE` |
-| `SERVER_ID` | ID del servidor | Auto-generado |
-| `STORAGE_PATH` | Ruta de almacenamiento | `/mnt/efs/json-storage` |
+Cada instancia EC2 debe tener:
+- Docker y Docker Compose instalados
+- SSM Agent activo
+- Rol con políticas:
+  - `AmazonSSMManagedInstanceCore`
+  - Acceso a ECR (pull)
 
-## 📡 API Endpoints
+```bash
+# Verificar SSM Agent
+sudo systemctl status amazon-ssm-agent
+
+# Si no está activo
+sudo systemctl start amazon-ssm-agent
+sudo systemctl enable amazon-ssm-agent
+```
+
+## 🛠️ API Endpoints
 
 ### Endpoints públicos
-
 ```bash
 # Health check
-curl http://localhost/health
+curl http://EC2_IP/health
 
 # Leer JSON
-curl http://localhost/json/mi-id
+curl http://EC2_IP/json/mi-id
 ```
 
 ### Endpoints protegidos
-
 ```bash
 # Crear JSON
-curl -X POST http://localhost/json \
+curl -X POST http://EC2_IP/json \
   -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"id": "test", "data": {"key": "value"}}'
 
 # Actualizar JSON
-curl -X PUT http://localhost/json/test \
+curl -X PUT http://EC2_IP/json/test \
   -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"key": "new value"}'
 
 # Eliminar JSON
-curl -X DELETE http://localhost/json/test \
+curl -X DELETE http://EC2_IP/json/test \
   -H "Authorization: Bearer ${API_TOKEN}"
 ```
 
-## 🧪 Pruebas
+## 📦 Proceso de Deploy
 
-### Instalar dependencias
+### Deploy Automático (Recomendado)
 
+1. Crear una rama para tu feature:
 ```bash
-pip install requests
+git checkout -b feature/mi-cambio
 ```
 
-### Probar balanceo de carga
+2. Hacer cambios y commit:
+```bash
+git add .
+git commit -m "feat: agregar nueva funcionalidad"
+git push origin feature/mi-cambio
+```
 
+3. Crear Pull Request en GitHub
+   - Se ejecutarán validaciones automáticas
+   - Build de prueba
+   - Análisis de seguridad con Trivy
+
+4. Al aprobar y hacer merge a main:
+   - Se construye nueva imagen con tag `vN` 
+   - Se pushea a ECR
+   - Se despliega automáticamente a TODAS las EC2s configuradas
+   - Health check en cada instancia
+
+### Verificar balanceo de carga
 ```bash
 cd pruebas
 python3 test_balanceo.py
 ```
 
-### Probar operaciones CRUD
-
-```bash
-cd pruebas
-# Editar test_api.py para configurar URL y token
-python3 test_api.py
-```
-
-## 🏗️ Arquitectura
-
-La aplicación está diseñada para:
-
-1. **Múltiples instancias**: Cada servidor tiene un ID único
-2. **Almacenamiento compartido**: Los JSONs se guardan en EFS/NFS
-3. **Concurrencia**: File locking previene conflictos
-4. **Stateless**: No hay sesiones, solo tokens
-
-## 📝 Ejemplo de uso completo
-
-```python
-import requests
-
-# Configuración
-base_url = "http://mi-load-balancer.com"
-token = "mi-token-secreto"
-headers = {"Authorization": f"Bearer {token}"}
-
-# Crear
-data = {"id": "usuario123", "data": {"nombre": "Juan", "edad": 30}}
-r = requests.post(f"{base_url}/json", json=data, headers=headers)
-
-# Leer
-r = requests.get(f"{base_url}/json/usuario123")
-print(r.json())
-
-# Actualizar
-new_data = {"nombre": "Juan", "edad": 31, "ciudad": "Madrid"}
-r = requests.put(f"{base_url}/json/usuario123", json=new_data, headers=headers)
-
-# Eliminar
-r = requests.delete(f"{base_url}/json/usuario123", headers=headers)
-```
-
-## 🔒 Seguridad
-
-- **Cambiar el token por defecto** antes de usar en producción
-- Usar **HTTPS** en producción
-- Implementar **rate limiting** si es necesario
-- Considerar **CORS** según tus necesidades
-
-## 🤝 Contribuir
-
-1. Fork el proyecto
-2. Crea tu rama (`git checkout -b feature/AmazingFeature`)
-3. Commit tus cambios (`git commit -m 'Add AmazingFeature'`)
-4. Push a la rama (`git push origin feature/AmazingFeature`)
-5. Abre un Pull Request
-
-## 📄 Licencia
-
-Este proyecto es parte de una prueba técnica.

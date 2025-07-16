@@ -48,7 +48,7 @@ def health_check(request: Request):
     
     return {
         "status": "healthy",
-        "version": "v1",
+        "version": "v2",
         "server_id": server_id,
         "client_ip": client_ip,
         "requested_host": host

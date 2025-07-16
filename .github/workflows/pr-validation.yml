@@ -11,8 +11,8 @@ permissions:
   security-events: write
 
 jobs:
-  build-and-scan:
-    name: Build and Security Scan
+  build:
+    name: Build Docker Image
     runs-on: ubuntu-latest
     
     steps:
@@ -33,6 +33,31 @@ jobs:
           challenge-app:scan
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/image.tar
+
+    - name: Upload image artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image
+        path: /tmp/image.tar
+        retention-days: 1
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Download image artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+        path: /tmp
+
+    - name: Load Docker image
+      run: |
+        docker load --input /tmp/image.tar
+        docker images | grep challenge-app
 
     - name: Run Trivy vulnerability scanner
       id: trivy
@@ -54,6 +79,8 @@ jobs:
   code-quality:
     name: Code Quality Checks
     runs-on: ubuntu-latest
+    needs: security-scan
+    if: always()
     
     steps:
     - name: Checkout code
@@ -89,26 +116,20 @@ jobs:
         echo "issues<<EOF" >> $GITHUB_OUTPUT
         echo "$ISSUES" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-
-  pr-comment:
-    name: Comment PR Results
-    runs-on: ubuntu-latest
-    needs: [build-and-scan, code-quality]
-    if: always()
     
-    steps:
     - name: Comment PR results
       uses: actions/github-script@v7
+      if: always()
       with:
         script: |
-          const buildScan = ${{ toJson(needs['build-and-scan']) }};
-          const codeQuality = ${{ toJson(needs['code-quality']) }};
+          const buildResult = '${{ needs.build.result }}';
+          const scanResult = '${{ needs.security-scan.result }}';
+          const currentJob = '${{ job.status }}';
+          const issues = `${{ steps.quality-checks.outputs.issues }}`;
           
           let body = `### Resultado de la validación\n\n`;
           
-          if (buildScan.result === 'success' && codeQuality.result === 'success') {
-            const issues = codeQuality.outputs && codeQuality.outputs['quality-checks.issues'];
-            
+          if (buildResult === 'success' && scanResult === 'success' && currentJob === 'success') {
             if (!issues || issues.trim() === '') {
               body += `Todo se ve bien! La imagen Docker se construyó correctamente.\n\n`;
               body += `Listo para hacer merge.`;

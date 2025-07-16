@@ -208,7 +208,6 @@ git push origin feature/mi-cambio
 cd pruebas
 python3 test_balanceo.py
 ```
-
 ---
 
 👤 **Autor**: Hermes Vargas  

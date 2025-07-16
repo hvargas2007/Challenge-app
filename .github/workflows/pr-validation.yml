@@ -11,8 +11,8 @@ permissions:
   security-events: write
 
 jobs:
-  build-and-scan:
-    name: Build and Security Scan
+  build:
+    name: Build Docker Image
     runs-on: ubuntu-latest
     
     steps:
@@ -33,6 +33,31 @@ jobs:
           challenge-app:scan
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/image.tar
+
+    - name: Upload image artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image
+        path: /tmp/image.tar
+        retention-days: 1
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Download image artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+        path: /tmp
+
+    - name: Load Docker image
+      run: |
+        docker load --input /tmp/image.tar
+        docker images | grep challenge-app
 
     - name: Run Trivy vulnerability scanner
       id: trivy
@@ -93,7 +118,7 @@ jobs:
   pr-comment:
     name: Comment PR Results
     runs-on: ubuntu-latest
-    needs: [build-and-scan, code-quality]
+    needs: [build, security-scan, code-quality]
     if: always()
     
     steps:
@@ -101,12 +126,13 @@ jobs:
       uses: actions/github-script@v7
       with:
         script: |
-          const buildScan = ${{ toJson(needs['build-and-scan']) }};
+          const build = ${{ toJson(needs['build']) }};
+          const securityScan = ${{ toJson(needs['security-scan']) }};
           const codeQuality = ${{ toJson(needs['code-quality']) }};
           
           let body = `### Resultado de la validación\n\n`;
           
-          if (buildScan.result === 'success' && codeQuality.result === 'success') {
+          if (build.result === 'success' && securityScan.result === 'success' && codeQuality.result === 'success') {
             const issues = codeQuality.outputs && codeQuality.outputs['quality-checks.issues'];
             
             if (!issues || issues.trim() === '') {

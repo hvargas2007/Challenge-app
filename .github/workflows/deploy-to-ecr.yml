@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'docker/**'
-      - '.github/workflows/deploy-to-ecr.yml'
 
 permissions:
   id-token: write 
